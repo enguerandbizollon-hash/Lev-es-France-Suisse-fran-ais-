@@ -1,0 +1,6 @@
+google-api-python-client>=2.100.0
+google-auth>=2.23.0
+# Nécessaire uniquement pour l'authentification OAuth utilisateur (mode interactif) :
+google-auth-oauthlib>=1.1.0
+# Nécessaire uniquement pour le serveur MCP :
+mcp[cli]>=1.2.0

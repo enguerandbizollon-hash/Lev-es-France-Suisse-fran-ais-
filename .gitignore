@@ -1,0 +1,15 @@
+# Secrets — NE JAMAIS committer
+service_account.json
+*service-account*.json
+credentials.json
+client_secret*.json
+token.json
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
