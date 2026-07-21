@@ -17,13 +17,21 @@ Usage rapide :
 """
 
 from .client import SheetsClient
+from .docs_client import DocsClient
 
-__all__ = ["SheetsClient", "build_sheets_service"]
-__version__ = "0.1.0"
+__all__ = ["SheetsClient", "DocsClient", "build_sheets_service", "build_docs_service"]
+__version__ = "0.2.0"
 
 
 def build_sheets_service():
     """Raccourci vers gsheets_connector.auth.build_sheets_service (import paresseux)."""
     from .auth import build_sheets_service as _build
+
+    return _build()
+
+
+def build_docs_service():
+    """Raccourci vers gsheets_connector.auth.build_docs_service (import paresseux)."""
+    from .auth import build_docs_service as _build
 
     return _build()

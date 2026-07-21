@@ -22,8 +22,11 @@ import os
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
-# Écriture complète sur les feuilles de calcul (lecture + écriture de cellules).
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+# Écriture complète sur les feuilles de calcul ET les documents Google Docs.
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/documents",
+]
 
 
 def _service_account_credentials():
@@ -101,3 +104,9 @@ def build_sheets_service():
     creds = get_credentials()
     # cache_discovery=False évite un warning bruyant quand oauth2client est absent.
     return build("sheets", "v4", credentials=creds, cache_discovery=False)
+
+
+def build_docs_service():
+    """Construit un client bas niveau de l'API Google Docs."""
+    creds = get_credentials()
+    return build("docs", "v1", credentials=creds, cache_discovery=False)

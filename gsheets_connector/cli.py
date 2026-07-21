@@ -25,6 +25,7 @@ import json
 import sys
 
 from .client import SheetsClient
+from .docs_client import DocsClient
 
 
 def _parse_set(pairs: list[str]) -> dict[str, str]:
@@ -71,7 +72,33 @@ def main(argv: list[str] | None = None) -> int:
     p_upsert.add_argument("--set", nargs="+", required=True, dest="set_pairs",
                           help="Paires Colonne=Valeur")
 
+    p_docs_read = sub.add_parser("docs-read", help="Lire le texte d'un Google Doc")
+    p_docs_read.add_argument("document_id")
+
+    p_docs_fill = sub.add_parser("docs-fill", help="Remplir un modèle (marqueur→valeur)")
+    p_docs_fill.add_argument("document_id")
+    p_docs_fill.add_argument("--set", nargs="+", required=True, dest="set_pairs",
+                             help="Paires Marqueur=Valeur, ex. {{client}}=ACME")
+
+    p_docs_append = sub.add_parser("docs-append", help="Ajouter du texte à un Google Doc")
+    p_docs_append.add_argument("document_id")
+    p_docs_append.add_argument("--text", required=True)
+
     args = parser.parse_args(argv)
+
+    if args.command.startswith("docs-"):
+        docs = DocsClient()
+        if args.command == "docs-read":
+            print(docs.read_text(args.document_id))
+        elif args.command == "docs-fill":
+            replacements = _parse_set(args.set_pairs)
+            res = docs.fill_template(args.document_id, replacements)
+            print(json.dumps(res, ensure_ascii=False))
+        elif args.command == "docs-append":
+            res = docs.append_text(args.document_id, args.text)
+            print(json.dumps(res, ensure_ascii=False))
+        return 0
+
     client = SheetsClient()
 
     if args.command == "tabs":

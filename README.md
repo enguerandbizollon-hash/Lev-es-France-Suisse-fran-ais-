@@ -1,13 +1,15 @@
-# Connecteur Google Sheets pour Claude
+# Connecteur Google Workspace (Sheets + Docs) pour Claude
 
 Un connecteur qui permet à **Claude — ou à n'importe quel script planifié — de lire
-ET d'écrire directement dans vos Google Sheets existants**, y compris la mise à
+ET d'écrire directement dans vos Google Sheets et Google Docs existants** : mise à
 jour ciblée de cellules (`écris "Relancé" dans la colonne Statut de la ligne dont
-l'email est contact@acme.com`).
+l'email est contact@acme.com`) et remplissage de documents modèles
+(`remplace {{client}} par ACME dans la proposition`).
 
 C'est la brique qui manque au connecteur Google Drive natif : celui-ci lit et crée
-des fichiers, mais ne modifie pas une cellule précise dans une feuille existante.
-Ce connecteur comble ce vide, sans changer d'outil et sans passer par Make.
+des fichiers, mais ne modifie pas une cellule précise dans une feuille existante,
+ni ne remplit un modèle Docs. Ce connecteur comble ce vide, sans changer d'outil
+et sans passer par Make.
 
 ## Ce qu'il sait faire
 
@@ -18,6 +20,9 @@ Ce connecteur comble ce vide, sans changer d'outil et sans passer par Make.
 | `append_row` | Ajouter une ligne en fin de feuille |
 | `write_range` | Écrire/écraser une plage de cellules |
 | `upsert_row` | **Mettre à jour une ligne repérée par une colonne clé (ex. Email), ou la créer si absente** — idéal pour tenir un CRM à jour |
+| `docs_read` | Lire le texte brut d'un Google Doc |
+| `docs_fill_template` | **Remplir un modèle** : remplacer `{{client}}`, `{{montant}}`… par les vraies valeurs (propositions, comptes-rendus) |
+| `docs_append` | Ajouter du texte à la fin d'un Google Doc |
 
 Trois façons de l'utiliser :
 1. **Serveur MCP** — Claude appelle le connecteur comme un outil (lecture/écriture en direct).
@@ -36,10 +41,21 @@ pip install -r requirements.txt
 
 ## Configuration de l'accès Google (à faire une seule fois)
 
-Pour l'**automatisation récurrente**, utilisez un **compte de service** : il
-s'authentifie tout seul, sans clic humain.
+Deux méthodes d'authentification. Choisissez selon votre contexte :
 
-### 1. Créer un projet et activer l'API Sheets
+- **Compte de service** (§ ci-dessous) — idéal pour l'automatisation, mais
+  **de nombreuses organisations Google Workspace bloquent le téléchargement des
+  clés** (règle `iam.disableServiceAccountKeyCreation`). Si vous rencontrez le
+  message « La création de clés de compte de service est désactivée », passez à
+  la méthode OAuth.
+- **OAuth utilisateur** (§ « Alternative : OAuth » plus bas) — non bloqué par
+  cette règle, et **aucun partage de feuille n'est requis** : le connecteur agit
+  en votre nom et accède directement à tous vos fichiers.
+
+Activez au préalable **deux** API dans la Bibliothèque : **Google Sheets API**
+et **Google Docs API**.
+
+### 1. Créer un projet et activer les API
 1. Ouvrez [Google Cloud Console](https://console.cloud.google.com/).
 2. Créez un projet (ou réutilisez-en un).
 3. Menu **APIs & Services → Library**, cherchez **Google Sheets API**, cliquez **Enable**.
@@ -78,6 +94,33 @@ La CLI et la bibliothèque lisent `GOOGLE_SERVICE_ACCOUNT_FILE` (ou
 
 ---
 
+## Alternative : OAuth (si les clés de compte de service sont bloquées)
+
+À utiliser quand votre organisation interdit les clés de compte de service, ou
+si vous préférez que le connecteur agisse **en votre nom** (accès direct à tous
+vos fichiers, sans partage préalable).
+
+1. **Écran de consentement** (Google Auth Platform → *Audience*) : Type
+   d'utilisateur **Interne** de préférence (réservé à votre organisation, pas de
+   validation Google, jetons sans expiration à 7 jours).
+2. **Autorisations** (Google Auth Platform → *Accès aux données*) : ajoutez les
+   scopes `.../auth/spreadsheets` et `.../auth/documents`.
+3. **Client OAuth** (Google Auth Platform → *Clients* → *Créer un client*) : type
+   **Application de bureau**. Téléchargez le JSON (ce téléchargement **n'est pas**
+   bloqué par la règle des comptes de service).
+4. Placez-le sous `client_secret.json` et renseignez `.env` :
+   ```bash
+   GOOGLE_OAUTH_CLIENT_FILE=./client_secret.json
+   ```
+5. **Autorisez une fois** : lancez n'importe quelle commande (ex.
+   `python -m gsheets_connector.cli tabs <id>`). Un navigateur s'ouvre → vous vous
+   connectez → un fichier `token.json` est créé. Ensuite tout est automatique.
+
+> Avec OAuth, **l'étape « partager avec le compte de service » est inutile** : le
+> connecteur accède aux fichiers auxquels vous avez déjà accès.
+
+---
+
 ## Utilisation en CLI
 
 ```bash
@@ -98,6 +141,17 @@ python -m gsheets_connector.cli append <spreadsheet_id> Prospects \
 python -m gsheets_connector.cli upsert <spreadsheet_id> Prospects \
     --key-column Email --key-value "contact@acme.com" \
     --set "Statut=Relancé" "Dernier contact=2026-07-08"
+
+# --- Google Docs ---
+# Lire le texte d'un document
+python -m gsheets_connector.cli docs-read <document_id>
+
+# Remplir un modèle (remplacer des marqueurs)
+python -m gsheets_connector.cli docs-fill <document_id> \
+    --set "{{client}}=ACME" "{{montant}}=25 000 €"
+
+# Ajouter du texte à la fin
+python -m gsheets_connector.cli docs-append <document_id> --text "Nouveau paragraphe."
 ```
 
 ### Automatisation récurrente (cron)

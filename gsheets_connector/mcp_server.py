@@ -17,6 +17,7 @@ import json
 from typing import Any
 
 from .client import SheetsClient
+from .docs_client import DocsClient
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -27,10 +28,11 @@ except ImportError as exc:  # pragma: no cover
     ) from exc
 
 
-mcp = FastMCP("google-sheets-connector")
+mcp = FastMCP("google-workspace-connector")
 
-# Instancié paresseusement pour que --help ou l'import ne déclenchent pas l'auth.
+# Instanciés paresseusement pour que --help ou l'import ne déclenchent pas l'auth.
 _client: SheetsClient | None = None
+_docs: DocsClient | None = None
 
 
 def client() -> SheetsClient:
@@ -38,6 +40,13 @@ def client() -> SheetsClient:
     if _client is None:
         _client = SheetsClient()
     return _client
+
+
+def docs() -> DocsClient:
+    global _docs
+    if _docs is None:
+        _docs = DocsClient()
+    return _docs
 
 
 @mcp.tool()
@@ -99,6 +108,30 @@ def upsert_row(
         key_value=key_value,
         updates=updates,
     )
+    return json.dumps(res, ensure_ascii=False)
+
+
+@mcp.tool()
+def docs_read(document_id: str) -> str:
+    """Lit le texte brut d'un Google Doc."""
+    return docs().read_text(document_id)
+
+
+@mcp.tool()
+def docs_fill_template(document_id: str, replacements: dict[str, Any]) -> str:
+    """Remplit un modèle : remplace chaque marqueur par sa valeur dans tout le doc.
+
+    Ex. replacements = {"{{client}}": "ACME", "{{montant}}": "25 000 €"}.
+    Conseil : copiez d'abord le modèle (connecteur Drive) puis remplissez la copie.
+    """
+    res = docs().fill_template(document_id, replacements)
+    return json.dumps(res, ensure_ascii=False)
+
+
+@mcp.tool()
+def docs_append(document_id: str, text: str) -> str:
+    """Ajoute du texte à la fin d'un Google Doc."""
+    res = docs().append_text(document_id, text)
     return json.dumps(res, ensure_ascii=False)
 
 
