@@ -51,15 +51,33 @@ console.log(
   "\n2) Après avoir autorisé, copiez le paramètre `code` de l'URL localhost.\n"
 );
 
+/**
+ * Extrait le `code` d'autorisation, que l'utilisateur colle soit la valeur
+ * brute, soit l'URL localhost complète (http://localhost/?...&code=...&scope=...).
+ * Google URL-encode parfois le code — on le décode aussi.
+ */
+function extractCode(raw) {
+  const input = raw.trim();
+  // Cas 1 : l'utilisateur a collé une URL entière → on lit le paramètre `code`.
+  const match = input.match(/[?&]code=([^&\s]+)/);
+  const value = match ? match[1] : input;
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-rl.question("Collez le code ici : ", async (code) => {
+rl.question("Collez le code (ou l'URL localhost entière) ici : ", async (raw) => {
   rl.close();
+  const code = extractCode(raw);
   try {
     const res = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
-        code: code.trim(),
+        code,
         client_id: CLIENT_ID,
         client_secret: CLIENT_SECRET,
         redirect_uri: REDIRECT_URI,
