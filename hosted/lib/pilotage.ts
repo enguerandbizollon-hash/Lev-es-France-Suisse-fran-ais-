@@ -157,6 +157,95 @@ function dupKey(tache: string, echeance: string): string {
   return `${normalizeTask(tache)}|${echeance}`;
 }
 
+// ---- Recouvrement sémantique SAS / TODO ----------------------------------
+// Le doublon strict (même intitulé + même échéance) ne détecte pas un
+// recouvrement de sens : « Relancer Damien Rousson sur le créneau du 7/09 »
+// recoupe « Confirmer le rendez-vous de cadrage et fixer une date » (T010).
+// sas_add compare donc la proposition aux lignes ouvertes du TODO du même
+// dossier — même contact, ou intitulé proche — et avertit sans bloquer :
+// la décision reste au SAS.
+
+/** Seuil de similarité d'intitulé (coefficient de Dice sur les mots). */
+export const SEUIL_SIMILARITE = 0.5;
+
+// Mots-outils français ignorés dans la comparaison d'intitulés (les mots de
+// moins de 3 lettres — le, la, de, du, à, un, et… — sont déjà écartés).
+const MOTS_OUTILS = new Set([
+  "les", "des", "une", "aux", "sur", "pour", "avec", "dans", "par", "pas",
+  "est", "son", "ses", "ces", "cette", "leur", "chez", "vers", "entre",
+]);
+
+function taskTokens(s: string): Set<string> {
+  return new Set(
+    normalizeTask(s)
+      .split(/[^a-z0-9]+/)
+      .filter((t) => t.length >= 3 && !MOTS_OUTILS.has(t))
+  );
+}
+
+/** Similarité d'intitulé : Dice sur les mots significatifs, entre 0 et 1. */
+export function titleSimilarity(a: string, b: string): number {
+  const ta = taskTokens(a);
+  const tb = taskTokens(b);
+  if (!ta.size || !tb.size) return 0;
+  let communs = 0;
+  for (const t of ta) if (tb.has(t)) communs += 1;
+  return (2 * communs) / (ta.size + tb.size);
+}
+
+/** Même contact si égalité ou inclusion après normalisation (« JF » ⊂ « JF Suraud »). */
+function contactsOverlap(a: string, b: string): boolean {
+  const na = normalizeTask(a);
+  const nb = normalizeTask(b);
+  if (na.length < 2 || nb.length < 2) return false;
+  return na === nb || na.includes(nb) || nb.includes(na);
+}
+
+export interface Recouvrement {
+  id: string;
+  ligne: number;
+  tache: string;
+  contact: string;
+  echeance: string;
+  statut: string;
+  motifs: string[];
+  similarite: number;
+}
+
+/** Lignes ouvertes du TODO du même dossier qui recoupent la proposition. */
+function findRecouvrements(
+  proposition: { dossier: string; tache: string; contact?: string },
+  todoRows: TodoRow[]
+): Recouvrement[] {
+  return todoRows
+    .filter(
+      (r) =>
+        r.dossier === proposition.dossier &&
+        r.statut !== "Fait" &&
+        r.statut !== "Annulé"
+    )
+    .map((r) => {
+      const motifs: string[] = [];
+      if (contactsOverlap(proposition.contact ?? "", r.contact)) {
+        motifs.push("même contact");
+      }
+      const similarite = titleSimilarity(proposition.tache, r.tache);
+      if (similarite >= SEUIL_SIMILARITE) motifs.push("intitulé proche");
+      return {
+        id: r.id,
+        ligne: r.ligne,
+        tache: r.tache,
+        contact: r.contact,
+        echeance: r.echeance,
+        statut: r.statut,
+        motifs,
+        similarite: Math.round(similarite * 100) / 100,
+      };
+    })
+    .filter((r) => r.motifs.length > 0)
+    .sort((a, b) => b.similarite - a.similarite);
+}
+
 async function readGrid(sheet: string, lastColumn: string): Promise<string[][]> {
   const api = sheetsClient();
   const res = await api.spreadsheets.values.get({
@@ -556,6 +645,9 @@ async function readSasRows(): Promise<SasRow[]> {
 /**
  * Dépose une proposition dans le SAS (colonne Valider laissée vide, à cocher
  * par Enguérand). Refuse un doublon contre le SAS en attente ET contre le TODO.
+ * Signale sans bloquer un recouvrement sémantique avec les lignes ouvertes du
+ * TODO du même dossier (même contact ou intitulé proche) : la décision reste
+ * au SAS.
  */
 export async function sasAdd(fields: TodoFields, source: string) {
   if (!source || !source.trim()) {
@@ -582,15 +674,19 @@ export async function sasAdd(fields: TodoFields, source: string) {
         `avec la même échéance, en attente de validation.`
     );
   }
-  const todoClash = (await readTodoRows()).find(
-    (r) => dupKey(r.tache, r.echeance) === key
-  );
+  const todoRows = await readTodoRows();
+  const todoClash = todoRows.find((r) => dupKey(r.tache, r.echeance) === key);
   if (todoClash) {
     throw new Error(
       `Doublon refusé : le TODO contient déjà « ${todoClash.tache} » ` +
         `(${todoClash.id || `ligne ${todoClash.ligne}`}) avec la même échéance.`
     );
   }
+
+  const recouvrements = findRecouvrements(
+    { dossier: fields.dossier, tache, contact: fields.contact },
+    todoRows
+  );
 
   const n = await appendAndLocate(SAS, [
     "", // A vide dans le SAS
@@ -608,6 +704,17 @@ export async function sasAdd(fields: TodoFields, source: string) {
     "", // M Valider : décision d'Enguérand
   ]);
   await dressRow(SAS, n, SAS_VALIDATIONS);
+  if (recouvrements.length) {
+    return {
+      ligne: n,
+      tache,
+      avertissement:
+        `Recouvrement possible avec ${recouvrements.length} ligne(s) ouverte(s) ` +
+        `du TODO sur le dossier ${fields.dossier}. La proposition est déposée au SAS ; ` +
+        `trancher à la validation (O pour basculer, N si la ligne TODO couvre déjà l'action).`,
+      recouvrements,
+    };
+  }
   return { ligne: n, tache };
 }
 
