@@ -202,6 +202,7 @@ function contactsOverlap(a: string, b: string): boolean {
 }
 
 export interface Recouvrement {
+  origine: "TODO ouvert" | "TODO terminé" | "SAS rejeté";
   id: string;
   ligne: number;
   tache: string;
@@ -212,26 +213,39 @@ export interface Recouvrement {
   similarite: number;
 }
 
-/** Lignes ouvertes du TODO du même dossier qui recoupent la proposition. */
+/**
+ * Lignes du même dossier qui recoupent la proposition : TODO ouvert (même
+ * contact ou intitulé proche), mais aussi la mémoire des exécutions passées,
+ * pour ne pas reproposer chaque matin la même chose — tâches déjà faites ou
+ * annulées et propositions déjà rejetées au SAS (intitulé proche uniquement :
+ * un même contact revient légitimement sur des sujets différents).
+ */
 function findRecouvrements(
   proposition: { dossier: string; tache: string; contact?: string },
-  todoRows: TodoRow[]
+  todoRows: TodoRow[],
+  sasRows: SasRow[]
 ): Recouvrement[] {
-  return todoRows
-    .filter(
-      (r) =>
-        r.dossier === proposition.dossier &&
-        r.statut !== "Fait" &&
-        r.statut !== "Annulé"
-    )
-    .map((r) => {
-      const motifs: string[] = [];
+  const out: Recouvrement[] = [];
+  const round = (s: number) => Math.round(s * 100) / 100;
+
+  for (const r of todoRows) {
+    if (r.dossier !== proposition.dossier) continue;
+    const ouvert = r.statut !== "Fait" && r.statut !== "Annulé";
+    const similarite = titleSimilarity(proposition.tache, r.tache);
+    const motifs: string[] = [];
+    if (ouvert) {
       if (contactsOverlap(proposition.contact ?? "", r.contact)) {
         motifs.push("même contact");
       }
-      const similarite = titleSimilarity(proposition.tache, r.tache);
       if (similarite >= SEUIL_SIMILARITE) motifs.push("intitulé proche");
-      return {
+    } else if (similarite >= SEUIL_SIMILARITE) {
+      motifs.push(
+        `intitulé proche d'une tâche déjà ${r.statut === "Fait" ? "faite" : "annulée"}`
+      );
+    }
+    if (motifs.length) {
+      out.push({
+        origine: ouvert ? "TODO ouvert" : "TODO terminé",
         id: r.id,
         ligne: r.ligne,
         tache: r.tache,
@@ -239,11 +253,30 @@ function findRecouvrements(
         echeance: r.echeance,
         statut: r.statut,
         motifs,
-        similarite: Math.round(similarite * 100) / 100,
-      };
-    })
-    .filter((r) => r.motifs.length > 0)
-    .sort((a, b) => b.similarite - a.similarite);
+        similarite: round(similarite),
+      });
+    }
+  }
+
+  for (const r of sasRows) {
+    if (r.fields.dossier !== proposition.dossier) continue;
+    if (r.valider !== "Rejeté") continue;
+    const similarite = titleSimilarity(proposition.tache, r.fields.tache);
+    if (similarite < SEUIL_SIMILARITE) continue;
+    out.push({
+      origine: "SAS rejeté",
+      id: "",
+      ligne: r.ligne,
+      tache: r.fields.tache,
+      contact: r.fields.contact ?? "",
+      echeance: r.fields.echeance ?? "",
+      statut: "Rejeté",
+      motifs: ["intitulé proche d'une proposition déjà rejetée"],
+      similarite: round(similarite),
+    });
+  }
+
+  return out.sort((a, b) => b.similarite - a.similarite);
 }
 
 async function readGrid(sheet: string, lastColumn: string): Promise<string[][]> {
@@ -644,10 +677,12 @@ async function readSasRows(): Promise<SasRow[]> {
 
 /**
  * Dépose une proposition dans le SAS (colonne Valider laissée vide, à cocher
- * par Enguérand). Refuse un doublon contre le SAS en attente ET contre le TODO.
- * Signale sans bloquer un recouvrement sémantique avec les lignes ouvertes du
- * TODO du même dossier (même contact ou intitulé proche) : la décision reste
- * au SAS.
+ * par Enguérand). Refuse un doublon contre le SAS en attente, contre le TODO,
+ * ET contre les propositions déjà rejetées (un « N » d'Enguérand ne se
+ * redépose pas à l'identique). Signale sans bloquer un recouvrement
+ * sémantique avec le même dossier : lignes ouvertes du TODO (même contact ou
+ * intitulé proche), tâches déjà faites ou annulées et propositions déjà
+ * rejetées (intitulé proche). La décision reste au SAS.
  */
 export async function sasAdd(fields: TodoFields, source: string) {
   if (!source || !source.trim()) {
@@ -663,7 +698,8 @@ export async function sasAdd(fields: TodoFields, source: string) {
 
   const key = dupKey(tache, echeance);
   const pendingStates = ["", "O", "N", "Modifier"];
-  const sasClash = (await readSasRows()).find(
+  const sasRows = await readSasRows();
+  const sasClash = sasRows.find(
     (r) =>
       pendingStates.includes(r.valider) &&
       dupKey(r.fields.tache, r.fields.echeance ?? "") === key
@@ -672,6 +708,18 @@ export async function sasAdd(fields: TodoFields, source: string) {
     throw new Error(
       `Doublon refusé : le SAS contient déjà « ${sasClash.fields.tache} » en ligne ${sasClash.ligne} ` +
         `avec la même échéance, en attente de validation.`
+    );
+  }
+  const rejeteClash = sasRows.find(
+    (r) =>
+      r.valider === "Rejeté" &&
+      dupKey(r.fields.tache, r.fields.echeance ?? "") === key
+  );
+  if (rejeteClash) {
+    throw new Error(
+      `Doublon refusé : cette proposition a déjà été rejetée au SAS ` +
+        `(ligne ${rejeteClash.ligne}, « ${rejeteClash.fields.tache} »). ` +
+        `Ne pas la redéposer sans élément nouveau, à citer dans l'intitulé ou les notes.`
     );
   }
   const todoRows = await readTodoRows();
@@ -685,7 +733,8 @@ export async function sasAdd(fields: TodoFields, source: string) {
 
   const recouvrements = findRecouvrements(
     { dossier: fields.dossier, tache, contact: fields.contact },
-    todoRows
+    todoRows,
+    sasRows
   );
 
   const n = await appendAndLocate(SAS, [
@@ -709,9 +758,10 @@ export async function sasAdd(fields: TodoFields, source: string) {
       ligne: n,
       tache,
       avertissement:
-        `Recouvrement possible avec ${recouvrements.length} ligne(s) ouverte(s) ` +
-        `du TODO sur le dossier ${fields.dossier}. La proposition est déposée au SAS ; ` +
-        `trancher à la validation (O pour basculer, N si la ligne TODO couvre déjà l'action).`,
+        `Recouvrement possible avec ${recouvrements.length} ligne(s) du dossier ${fields.dossier} ` +
+        `(TODO ouvert, tâche déjà terminée ou proposition déjà rejetée, voir origine). ` +
+        `La proposition est déposée au SAS ; trancher à la validation ` +
+        `(O pour basculer, N si la ligne existante couvre déjà l'action ou si le sujet a déjà été tranché).`,
       recouvrements,
     };
   }

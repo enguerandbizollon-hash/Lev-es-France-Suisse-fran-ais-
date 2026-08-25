@@ -158,11 +158,13 @@ const handler = createMcpHandler(
       "sas_add",
       "Dépose une proposition d'action dans le SAS de validation du fichier " +
         "Pilotage_Vectis (rien n'entre au TODO sans validation humaine). La " +
-        "source est obligatoire. Refuse un doublon contre le SAS et le TODO. " +
-        "Si la proposition recoupe une ligne ouverte du TODO du même dossier " +
-        "(même contact ou intitulé proche), la ligne est quand même déposée " +
-        "et le résultat porte un avertissement `recouvrements` : le relayer " +
-        "dans le brief, la décision reste au SAS.",
+        "source est obligatoire. Refuse un doublon contre le SAS, le TODO et " +
+        "les propositions déjà rejetées (ne pas redéposer un « N » à " +
+        "l'identique sans élément nouveau). Si la proposition recoupe le même " +
+        "dossier (ligne TODO ouverte à même contact ou intitulé proche, tâche " +
+        "déjà faite, proposition déjà rejetée), la ligne est quand même " +
+        "déposée et le résultat porte un avertissement `recouvrements` avec " +
+        "l'origine : le relayer dans le brief, la décision reste au SAS.",
       {
         ...todoFieldsShape,
         source: z
